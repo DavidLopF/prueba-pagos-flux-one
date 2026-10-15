@@ -57,6 +57,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TokenPair' }
+        '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
   /auth/refresh:
     post:
@@ -78,6 +79,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TokenPair' }
+        '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
   /auth/logout:
     post:
@@ -95,6 +97,7 @@ paths:
                 refreshToken: { type: string }
       responses:
         '204': { description: Revocado }
+        '400': { $ref: '#/components/responses/Error' }
   /auth/me:
     get:
       tags: [auth]
@@ -241,6 +244,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/AuditEvent' }
+        '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
 
 components:
@@ -344,5 +348,5 @@ components:
         code:
           type: string
           example: INSUFFICIENT_FUNDS
-          enum: [VALIDATION_ERROR, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_REUSED, UNAUTHORIZED, INVALID_CREDENTIALS, EMAIL_TAKEN, FORBIDDEN_ACCOUNT, NOT_FOUND, ACCOUNT_NOT_FOUND, INVALID_AMOUNT, INSUFFICIENT_FUNDS, SAME_ACCOUNT, INVALID_STATE]
+          enum: [VALIDATION_ERROR, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_REUSED, UNAUTHORIZED, INVALID_CREDENTIALS, EMAIL_TAKEN, FORBIDDEN_ACCOUNT, NOT_FOUND, ACCOUNT_NOT_FOUND, INVALID_AMOUNT, INSUFFICIENT_FUNDS, SAME_ACCOUNT, INVALID_STATE, INTERNAL_ERROR]
         message: { type: string }

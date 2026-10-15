@@ -271,6 +271,12 @@ Estados terminales: `FAILED`, `REVERSED`. `COMPLETED` es terminal salvo por reve
 - When alice hace `GET /audit/transfers/{id}/events` de una transferencia propia
 - Then recibe los eventos ordenados por `occurredAt` ascendente con `eventType`, `status`, `occurredAt` y `payload`.
 
+**AUD-06 Mensajes inválidos a la DLQ**
+- Given un mensaje que no es JSON, no cumple el contrato del evento o tiene datos que PostgreSQL rechaza
+- When el consumidor de auditoría lo recibe
+- Then lo rechaza sin reencolar (`nack(requeue=false)`) y termina en `audit.transfer-events.dlq`
+- And no bloquea los mensajes siguientes; un error transitorio (BD caída) sí se reencola.
+
 ---
 
 ## 8. Frontend (FE)
@@ -309,7 +315,8 @@ Contrato (puerto 8080 en la red de compose, `http://localhost:8081` desde el hos
 **RAIL-01 Respuestas aleatorias**
 - Given el riel en modo `RANDOM` con pesos configurables (por defecto 55 % ACCEPTED, 15 % REJECTED, 15 % 503, 15 % timeout)
 - When recibe `POST /rail/transfers` o `POST /rail/reversals`
-- Then responde 200, 422, 503 o no responde en 10 s según el sorteo.
+- Then responde 200, 422, 503 o no responde en 10 s según el sorteo
+- And un body inválido (campos faltantes, monto con formato inválido o ≤ 0) responde 400 `BAD_REQUEST` sin procesar nada.
 
 **RAIL-02 Idempotente por reference**
 - Given una reference ya procesada (ACCEPTED o REJECTED)
@@ -327,9 +334,11 @@ Contrato (puerto 8080 en la red de compose, `http://localhost:8081` desde el hos
 - Then solo se acepta si la original existe, fue ACCEPTED, el monto coincide y no fue reversada antes.
 
 **RAIL-05 Escenarios deterministas para demo**
-- Given un `to` que contiene `OK`, `REJECT`, `DOWN`, `TIMEOUT` (procesada) o `LOST` (no procesada), o un `to` con `REVOK`/`REVREJECT`/`REVDOWN`… para el reverso
-- Or el modo forzado con `PUT /rail/admin/mode`
-- Then el resultado es el indicado (los tokens ganan sobre el modo).
+- Given un `to` que contiene como **palabra completa** (separada por `-`, `_`, espacio…; sin distinguir mayúsculas)
+  `OK`, `REJECT`, `DOWN`, `TIMEOUT` (procesada) o `LOST` (no procesada) — p. ej. `EXT-REJECT-1` —,
+  o `REVOK` / `REVREJECT` / `REVDOWN` / `REVTIMEOUT` / `REVLOST` para el reverso de esa transferencia (p. ej. `EXT-OK-REVREJECT`)
+- Or el modo forzado con `PUT /rail/admin/mode` (en modo forzado las consultas GET son veraces e inmediatas)
+- Then el resultado es el indicado (precedencia: token > modo > azar).
 
 ---
 
