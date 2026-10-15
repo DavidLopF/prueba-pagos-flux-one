@@ -1,0 +1,348 @@
+openapi: 3.0.3
+info:
+  title: Mini portal de pagos
+  version: 1.0.0
+  description: |
+    Contrato de los tres microservicios (auth, payments, audit) expuestos detrás del gateway nginx del frontend.
+    Criterios de aceptación en docs/spec.md (los IDs se citan en cada operación).
+    Montos: string decimal COP con máximo 2 decimales (p. ej. "150000.50").
+servers:
+  - url: http://localhost:8080/api
+    description: Gateway (nginx del frontend)
+  - url: http://localhost:3001
+    description: auth-service directo
+  - url: http://localhost:3002
+    description: payments-service directo
+  - url: http://localhost:3003
+    description: audit-service directo
+tags:
+  - name: auth
+  - name: transfers
+  - name: accounts
+  - name: audit
+security:
+  - bearerAuth: []
+paths:
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Registrar usuario (AUTH-01)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Credentials' }
+      responses:
+        '201':
+          description: Usuario creado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Login (AUTH-02, AUTH-03)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Credentials' }
+      responses:
+        '200':
+          description: Tokens emitidos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401': { $ref: '#/components/responses/Error' }
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Rotar refresh token (AUTH-05)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: Nuevo par de tokens
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401': { $ref: '#/components/responses/Error' }
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Revocar refresh token (AUTH-05)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '204': { description: Revocado }
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Usuario autenticado
+      responses:
+        '200':
+          description: Usuario
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /transfers:
+    post:
+      tags: [transfers]
+      summary: Crear transferencia (TR-01..07, IDEM-01..04, EXT-01)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTransferRequest' }
+      responses:
+        '201':
+          description: Transferencia interna completada
+          headers:
+            Idempotent-Replayed: { $ref: '#/components/headers/IdempotentReplayed' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transfer' }
+        '202':
+          description: Transferencia externa aceptada, pendiente del riel
+          headers:
+            Idempotent-Replayed: { $ref: '#/components/headers/IdempotentReplayed' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transfer' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    get:
+      tags: [transfers]
+      summary: Historial de transferencias de una cuenta propia (TR-09)
+      parameters:
+        - name: account
+          in: query
+          required: true
+          schema: { type: string, example: ACC-001 }
+      responses:
+        '200':
+          description: Transferencias ordenadas por createdAt desc
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Transfer' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /transfers/{id}:
+    get:
+      tags: [transfers]
+      summary: Consultar estado de una transferencia (TR-08)
+      parameters:
+        - $ref: '#/components/parameters/TransferId'
+      responses:
+        '200':
+          description: Transferencia
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transfer' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /transfers/{id}/reversal:
+    post:
+      tags: [transfers]
+      summary: Reversar una transferencia completada (REV-01..06)
+      parameters:
+        - $ref: '#/components/parameters/TransferId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Reverso interno aplicado (REVERSED)
+          headers:
+            Idempotent-Replayed: { $ref: '#/components/headers/IdempotentReplayed' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transfer' }
+        '202':
+          description: Reverso externo en curso (REVERSAL_PENDING)
+          headers:
+            Idempotent-Replayed: { $ref: '#/components/headers/IdempotentReplayed' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transfer' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /accounts/{accountId}/balance:
+    get:
+      tags: [accounts]
+      summary: Consultar saldo de una cuenta propia (BAL-01, AUTH-06)
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, example: ACC-001 }
+      responses:
+        '200':
+          description: Saldo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Balance' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /accounts:
+    get:
+      tags: [accounts]
+      summary: Cuentas del usuario autenticado
+      responses:
+        '200':
+          description: Cuentas propias con saldo
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Balance' }
+
+  /audit/transfers/{id}/events:
+    get:
+      tags: [audit]
+      summary: Historial de auditoría de una transferencia (AUD-05)
+      parameters:
+        - $ref: '#/components/parameters/TransferId'
+      responses:
+        '200':
+          description: Eventos ordenados por occurredAt asc
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AuditEvent' }
+        '401': { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Identificador único del intento lógico (UUID recomendado). Alcance por usuario.
+      schema: { type: string, minLength: 1, maxLength: 255 }
+    TransferId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  headers:
+    IdempotentReplayed:
+      description: "true si la respuesta es una reproducción de una petición anterior con la misma key"
+      schema: { type: string, enum: ['true'] }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Money:
+      type: string
+      pattern: '^\d+(\.\d{1,2})?$'
+      example: '150000.50'
+    Credentials:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+    TokenPair:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        expiresIn: { type: integer, example: 900 }
+    CreateTransferRequest:
+      type: object
+      required: [type, fromAccount, toAccount, amount]
+      properties:
+        type: { type: string, enum: [INTERNAL, EXTERNAL] }
+        fromAccount: { type: string, example: ACC-001 }
+        toAccount: { type: string, example: ACC-002, description: 'Cuenta interna (INTERNAL) o identificador externo (EXTERNAL)' }
+        amount: { $ref: '#/components/schemas/Money' }
+    TransferStatus:
+      type: string
+      enum: [PENDING, UNKNOWN, COMPLETED, FAILED, REVERSAL_PENDING, REVERSED]
+    Transfer:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [INTERNAL, EXTERNAL] }
+        fromAccount: { type: string }
+        toAccount: { type: string }
+        amount: { $ref: '#/components/schemas/Money' }
+        currency: { type: string, enum: [COP] }
+        status: { $ref: '#/components/schemas/TransferStatus' }
+        attempts: { type: integer }
+        requiresManualReview: { type: boolean }
+        failureReason: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Balance:
+      type: object
+      properties:
+        accountId: { type: string }
+        balance: { $ref: '#/components/schemas/Money' }
+        currency: { type: string, enum: [COP] }
+    AuditEvent:
+      type: object
+      properties:
+        eventId: { type: string, format: uuid }
+        transferId: { type: string, format: uuid }
+        eventType:
+          type: string
+          enum: [TRANSFER_CREATED, TRANSFER_COMPLETED, TRANSFER_FAILED, TRANSFER_UNKNOWN, TRANSFER_REVERSAL_REQUESTED, TRANSFER_REVERSED, TRANSFER_REVERSAL_REJECTED]
+        status: { $ref: '#/components/schemas/TransferStatus' }
+        actorId: { type: string, nullable: true }
+        occurredAt: { type: string, format: date-time }
+        payload: { type: object }
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: INSUFFICIENT_FUNDS
+          enum: [VALIDATION_ERROR, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_REUSED, UNAUTHORIZED, INVALID_CREDENTIALS, EMAIL_TAKEN, FORBIDDEN_ACCOUNT, NOT_FOUND, ACCOUNT_NOT_FOUND, INVALID_AMOUNT, INSUFFICIENT_FUNDS, SAME_ACCOUNT, INVALID_STATE]
+        message: { type: string }
