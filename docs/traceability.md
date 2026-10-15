@@ -2,7 +2,7 @@
 
 Generado por `node scripts/trace.mjs`. No editar a mano.
 
-Criterios: 55 · cubiertos: 55 · sin test: 0
+Criterios: 59 · cubiertos: 59 · sin test: 0
 
 | Criterio | Descripción | Tests | Archivos |
 |----------|-------------|------:|----------|
@@ -61,3 +61,7 @@ Criterios: 55 · cubiertos: 55 · sin test: 0
 | PL-04 | Un solo uso | 6 | `services/payments-service/test/acceptance/payment-links.acceptance.test.ts`<br>`services/payments-service/test/unit/payment-link.test.ts`<br>`frontend/test/payment-links.test.tsx` |
 | PL-05 | Reglas del pago | 3 | `services/payments-service/test/acceptance/payment-links.acceptance.test.ts`<br>`services/payments-service/test/unit/payment-link.test.ts`<br>`frontend/test/payment-links.test.tsx` |
 | PL-06 | Mis links | 2 | `services/payments-service/test/acceptance/payment-links.acceptance.test.ts`<br>`frontend/test/payment-links.test.tsx` |
+| RT-01 | Aviso solo a los participantes | 1 | `services/payments-service/test/acceptance/realtime.acceptance.test.ts` |
+| RT-02 | Canal autenticado | 4 | `services/payments-service/test/acceptance/realtime.acceptance.test.ts`<br>`frontend/test/realtime.test.tsx` |
+| RT-03 | Fan-out por instancia | 1 | `services/payments-service/test/acceptance/realtime-rabbitmq.acceptance.test.ts` |
+| FE-04 | Movimientos que se actualizan solos | 2 | `frontend/test/realtime.test.tsx` |

@@ -57,18 +57,19 @@ curl -si localhost:8080/api/transfers -H "authorization: Bearer $TOKEN" -H "Idem
 | Broker caído sin perder eventos | `docker compose stop rabbitmq` → transferir (funciona) → `docker compose start rabbitmq` → la auditoría se pone al día sola |
 | Doble clic / reintento | En "Nueva transferencia" el botón se bloquea en el primer clic; con curl, repetir la misma `Idempotency-Key` |
 | Link de cobro | Dashboard de alice → "Cobrar con link" → abrir el enlace en otra ventana y pagar con bob |
+| Movimientos en vivo | Dashboard de alice abierto (indicador "● En vivo"); en otra ventana privada bob le transfiere → el movimiento y el saldo aparecen solos |
 
 ## Arquitectura
 
 ```
-                 ┌──────────── frontend (React, nginx :8080) ────────────┐
-                 │  /api/auth        /api/transfers|accounts   /api/audit │
-                 ▼                          ▼                        ▼
+                 ┌──────────────── frontend (React, nginx :8080) ─────────────────┐
+                 │  /api/auth   /api/transfers|accounts|payment-links|ws   /api/audit │
+                 ▼                          ▼  ▲ WebSocket                       ▼
           auth-service              payments-service ──outbox──▶ RabbitMQ ──▶ audit-service
-          (auth_schema)             (payment_schema)   relay      payments.events   (audit_schema)
-                                          │ worker
-                                          ▼
-                                   bank-rail-simulator
+          (auth_schema)             (payment_schema)   relay   payments.events  (audit_schema)
+                                     │ worker    ▲                    │
+                                     ▼           └── cola exclusiva ──┘ (avisos en tiempo real)
+                              bank-rail-simulator
 ```
 
 Cada servicio: `domain/` (entidades, máquina de estados, puertos; sin dependencias de framework) →
@@ -92,6 +93,7 @@ Cada servicio: `domain/` (entidades, máquina de estados, puertos; sin dependenc
 | **Un rol de PostgreSQL por servicio** | `payments_user` solo tiene privilegios en `payment_schema` (igual audit y auth). El aislamiento lo garantiza la BD, no una convención (test ARQ-01). Audit autoriza el historial con los `participantIds` que viajan en el evento, sin leer el esquema de pagos. |
 | **JWT HS256 compartido + refresh tokens opacos rotados** | Simple de verificar en payments/audit sin llamar a auth. Refresh tokens hasheados en BD, rotación en una TX con `FOR UPDATE` y detección de reutilización (revoca todas las sesiones del usuario). Login con hash señuelo contra enumeración de usuarios por tiempo. |
 | **Riel simulado propio** | Aleatorio por pesos, idempotente por `reference`, "verdad" consultable por GET y escenarios deterministas (palabras `OK/REJECT/DOWN/TIMEOUT/LOST` en el destino o `PUT /rail/admin/mode`) para demos y pruebas reproducibles. |
+| **Movimientos en tiempo real por WebSocket** | `GET /ws?token=` en payments-service. Los avisos salen de los mismos eventos del outbox: cada instancia consume `payments.events` con una **cola exclusiva y autodelete** (fan-out), así escala a N réplicas y cada una avisa a sus clientes conectados, solo a los participantes. El aviso solo dice *qué transferencia cambió*; el cliente vuelve a consultar la API (fuente de verdad), también al reconectar. El JWT va en la query (el navegador no permite headers en WebSocket); token inválido o vencido → cierre `4401` y el cliente renueva y reconecta. nginx no registra esa ruta en el access log. |
 | **Frontend sin doble envío** | Idempotency-Key generada al abrir el formulario y reutilizada en reintentos; botón bloqueado con un `ref` síncrono además del estado; polling cada 1,5 s hasta estado estable. |
 | **Tests con PostgreSQL real (Testcontainers)** | La concurrencia (idempotencia, sobregiro, reversos) solo se puede probar contra la BD real. Cada test cita su criterio (`[IDEM-02] …`) y `scripts/trace.mjs` genera `docs/traceability.md` y falla si algún criterio queda sin test. |
 
@@ -156,4 +158,4 @@ Yo decidí el stack y el alcance, revisé cada cambio y ejecuté cada commit (tr
 8. **Test que no probaba nada (frontend)**: el primer test de PL-02 ("la consulta pública no envía el token") corría sin sesión iniciada, así que pasaba aunque el código enviara el token. Se agregó la variante con sesión, que sí detecta el error.
 9. **Botón "Reversar" para quien no puede reversar**: el detalle lo mostraba también al receptor de la transferencia, y el backend (correctamente) solo deja reversar al dueño de la cuenta origen. Detectado al revisar las pantallas de Payment Links; ahora solo lo ve el dueño (test REV-01 del frontend).
 
-**Resultado**: 188 tests (auth 23, payments 89, audit 23, riel 38, frontend 15) y los 55 criterios de la spec con al menos un test (`docs/traceability.md`).
+**Resultado**: 196 tests (auth 23, payments 93, audit 23, riel 38, frontend 19) y los 59 criterios de la spec con al menos un test (`docs/traceability.md`).
