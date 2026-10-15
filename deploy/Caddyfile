@@ -1,0 +1,6 @@
+# HTTPS automático (Let's Encrypt / ZeroSSL) para DOMAIN, p. ej. 3-91-10-20.sslip.io.
+# Caddy hace proxy también del upgrade a WebSocket (/api/ws) sin configuración extra.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy frontend:80
+}

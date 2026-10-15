@@ -1,0 +1,56 @@
+# Producción (override): docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Solo Caddy (80/443, HTTPS automático) queda expuesto a internet; el resto vive en la red interna de compose.
+# Los secretos salen de .env (lo genera deploy/bootstrap.sh); si falta alguno, compose no arranca.
+services:
+  postgres:
+    ports: !reset []
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env}
+
+  rabbitmq:
+    ports: !reset []
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Define RABBITMQ_USER en .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Define RABBITMQ_PASSWORD en .env}
+
+  bank-rail:
+    ports: !reset []
+
+  auth-service:
+    ports: !reset []
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?Define JWT_SECRET en .env}
+
+  payments-service:
+    ports: !reset []
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?Define JWT_SECRET en .env}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+
+  audit-service:
+    ports: !reset []
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?Define JWT_SECRET en .env}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+
+  frontend:
+    ports: !reset []
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Define DOMAIN en .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificados: no se vuelven a pedir en cada reinicio
+      - caddy_config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  caddy_data:
+  caddy_config:
