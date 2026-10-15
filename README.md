@@ -59,6 +59,23 @@ curl -si localhost:8080/api/transfers -H "authorization: Bearer $TOKEN" -H "Idem
 | Link de cobro | Dashboard de alice → "Cobrar con link" → abrir el enlace en otra ventana y pagar con bob |
 | Movimientos en vivo | Dashboard de alice abierto (indicador "● En vivo"); en otra ventana privada bob le transfiere → el movimiento y el saldo aparecen solos |
 
+## Despliegue (producción en una VM / EC2)
+
+| Pieza | Qué hace |
+|---|---|
+| `docker-compose.prod.yml` | Override de producción: **solo Caddy** queda expuesto (80/443 con HTTPS automático); Postgres, RabbitMQ, los servicios y el riel quedan sin puertos públicos. JWT, Postgres y un usuario propio de RabbitMQ (no `guest`) son **obligatorios** por `.env`: si falta uno, compose no arranca. |
+| `deploy/Caddyfile` | Reverse proxy hacia el frontend/gateway con certificado Let's Encrypt para `<ip>.sslip.io`; hace proxy también del WebSocket. |
+| `deploy/bootstrap.sh` | En cualquier Ubuntu: 2 GB de swap, Docker, clona el repo, genera `.env` con secretos aleatorios (sin imprimirlos en el log) y levanta todo. Idempotente. |
+| `deploy/aws-ec2.sh` | Crea el EC2 (Ubuntu 24.04 `t3.medium`, IMDSv2, security group con 22 solo desde tu IP) e inyecta `bootstrap.sh` como user-data. |
+
+```bash
+git push                                   # el EC2 clona el repo desde GitHub
+AWS_PROFILE=personal ./deploy/aws-ec2.sh   # imprime la URL https://<ip>.sslip.io, el SSH y el comando para apagarlo
+```
+
+Para producción real faltaría: secretos en un gestor (SSM / Secrets Manager), contraseñas de los roles por servicio
+parametrizadas (hoy viven en `db/init`, solo accesibles dentro de la red de compose), backups de Postgres y dominio propio.
+
 ## Arquitectura
 
 ```
