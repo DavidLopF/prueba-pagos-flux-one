@@ -41,8 +41,12 @@ function clearTokens(): void {
   sessionStorage.removeItem(REFRESH_TOKEN);
 }
 
+export function getAccessToken(): string | null {
+  return sessionStorage.getItem(ACCESS_TOKEN);
+}
+
 export function isLoggedIn(): boolean {
-  return sessionStorage.getItem(ACCESS_TOKEN) !== null;
+  return getAccessToken() !== null;
 }
 
 let sessionExpiredListener: (() => void) | null = null;
@@ -53,6 +57,12 @@ export function onSessionExpired(listener: () => void): () => void {
   return () => {
     if (sessionExpiredListener === listener) sessionExpiredListener = null;
   };
+}
+
+/** La sesión ya no se puede renovar: se borra y la app vuelve al login. */
+export function expireSession(): void {
+  clearTokens();
+  sessionExpiredListener?.();
 }
 
 // ---------- Núcleo HTTP ----------
@@ -69,7 +79,7 @@ function send(path: string, { method = 'GET', body, idempotencyKey, auth = true 
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
-  const accessToken = sessionStorage.getItem(ACCESS_TOKEN);
+  const accessToken = getAccessToken();
   if (auth && accessToken) headers.Authorization = `Bearer ${accessToken}`;
   return fetch(BASE_URL + path, {
     method,
@@ -103,6 +113,17 @@ function refreshTokens(): Promise<boolean> {
   return refreshInFlight;
 }
 
+/**
+ * Para el WebSocket (cierre 4401, RT-02): renueva el access token con el MISMO refresh compartido que usan las
+ * peticiones HTTP. Si el servidor lo rechaza, cierra la sesión (→ login) y devuelve false. Un error de red se
+ * propaga: no es motivo para cerrar la sesión.
+ */
+export async function renewSession(): Promise<boolean> {
+  if (await refreshTokens()) return true;
+  expireSession();
+  return false;
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   let response = await send(path, options);
 
@@ -111,10 +132,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   // misma Idempotency-Key. Si el refresh falla, se borra la sesión y la app vuelve al login.
   if (response.status === 401 && options.auth !== false) {
     if (await refreshTokens()) response = await send(path, options);
-    if (response.status === 401) {
-      clearTokens();
-      sessionExpiredListener?.();
-    }
+    if (response.status === 401) expireSession();
   }
 
   if (!response.ok) throw await toApiError(response);

@@ -15,10 +15,12 @@ interface Props {
   accounts: Balance[];
   /** Cuenta seleccionada en el panel: la lista muestra sus links (PL-06). */
   selected: string | null;
+  /** Cambia cuando el panel recarga ("Actualizar" o aviso en vivo, FE-04): la lista se vuelve a pedir. */
+  refreshKey?: number;
 }
 
 /** "Cobrar con link": crear un link (PL-01) y ver los links de la cuenta seleccionada (PL-06). */
-export function PaymentLinks({ accounts, selected }: Props) {
+export function PaymentLinks({ accounts, selected, refreshKey }: Props) {
   const [accountId, setAccountId] = useState(accounts[0]?.accountId ?? '');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
@@ -51,7 +53,7 @@ export function PaymentLinks({ accounts, selected }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [listAccount, reloads]);
+  }, [listAccount, reloads, refreshKey]);
 
   function validate(): string | null {
     if (!isValidAmount(amount.trim())) {

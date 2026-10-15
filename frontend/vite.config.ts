@@ -16,6 +16,7 @@ export default defineConfig({
       '/api/accounts': { target: 'http://localhost:3002', rewrite: stripApi },
       '/api/payment-links': { target: 'http://localhost:3002', rewrite: stripApi },
       '/api/audit': { target: 'http://localhost:3003', rewrite: stripApi }, // /api/audit/* → /audit/*
+      '/api/ws': { target: 'ws://localhost:3002', ws: true, rewrite: stripApi }, // WebSocket FE-04 → /ws
     },
   },
   test: {

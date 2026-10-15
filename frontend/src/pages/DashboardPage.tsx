@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, describeError } from '../api/client';
 import type { Balance, Transfer } from '../api/types';
@@ -7,13 +7,31 @@ import { StatusBadge } from '../components/StatusBadge';
 import { TransferForm } from '../components/TransferForm';
 import { TYPE_LABEL, formatDateTime } from '../lib/format';
 import { formatCOP } from '../lib/money';
+import { useTransferUpdates, type ConnectionState } from '../realtime/useTransferUpdates';
+
+const LIVE_REFRESH_DEBOUNCE_MS = 300;
 
 export function DashboardPage() {
   const [accounts, setAccounts] = useState<Balance[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [transfers, setTransfers] = useState<Transfer[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [reloads, setReloads] = useState(0); // cada clic en "Actualizar" vuelve a cargar todo
+  const [reloads, setReloads] = useState(0); // cada incremento vuelve a cargar saldos, movimientos y links
+
+  const reload = useCallback(() => {
+    setError(null);
+    setReloads((n) => n + 1);
+  }, []);
+
+  // FE-04: cada aviso en vivo, y cada (re)conexión por si se perdieron avisos, vuelve a consultar la API (la
+  // fuente de verdad). Con debounce: una ráfaga de avisos (p. ej. CREATED + COMPLETED) = UNA sola recarga.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const scheduleReload = useCallback(() => {
+    clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(reload, LIVE_REFRESH_DEBOUNCE_MS);
+  }, [reload]);
+  useEffect(() => () => clearTimeout(refreshTimer.current), []);
+  const connection = useTransferUpdates({ onUpdate: scheduleReload, onReady: scheduleReload });
 
   useEffect(() => {
     let cancelled = false;
@@ -53,11 +71,6 @@ export function DashboardPage() {
     if (accountId === selected) return;
     setTransfers(null);
     setSelected(accountId);
-  }
-
-  function reload() {
-    setError(null);
-    setReloads((n) => n + 1);
   }
 
   return (
@@ -103,9 +116,12 @@ export function DashboardPage() {
             <h2 className="card__title">
               Movimientos {selected && <span className="muted">· {selected}</span>}
             </h2>
-            <button type="button" className="btn btn--ghost btn--sm" onClick={reload}>
-              Actualizar
-            </button>
+            <div className="card__actions">
+              <LiveStatus state={connection} />
+              <button type="button" className="btn btn--ghost btn--sm" onClick={reload}>
+                Actualizar
+              </button>
+            </div>
           </div>
           {error && (
             <p className="alert alert--error" role="alert">
@@ -128,13 +144,23 @@ export function DashboardPage() {
         <section className="card">
           <h2 className="card__title">Cobrar con link</h2>
           {accounts && accounts.length > 0 ? (
-            <PaymentLinks accounts={accounts} selected={selected} />
+            <PaymentLinks accounts={accounts} selected={selected} refreshKey={reloads} />
           ) : (
             <p className="muted">Necesitas una cuenta para cobrar.</p>
           )}
         </section>
       </div>
     </div>
+  );
+}
+
+/** Estado del canal en vivo junto a "Actualizar" (el punto de color lo pone el CSS). */
+function LiveStatus({ state }: { state: ConnectionState }) {
+  const live = state === 'live';
+  return (
+    <span className={`live-status ${live ? 'live-status--on' : 'live-status--off'}`} role="status">
+      {live ? 'En vivo' : 'Reconectando…'}
+    </span>
   );
 }
 

@@ -159,6 +159,42 @@ code {
   gap: 12px;
 }
 
+.card__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Estado del canal en vivo (FE-04): punto verde "En vivo" / ámbar que late "Reconectando…". */
+.live-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.live-status::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.live-status--on {
+  color: var(--success);
+}
+
+.live-status--off {
+  color: var(--pending-fg);
+}
+
+.live-status--off::before {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
 /* ---------- Botones y formularios ---------- */
 
 .btn {
