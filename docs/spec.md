@@ -348,3 +348,45 @@ Contrato (puerto 8080 en la red de compose, `http://localhost:8081` desde el hos
 - Given el rol de base de datos de un servicio (p. ej. `payments_user`)
 - When intenta leer otro esquema (`audit_schema`, `auth_schema`) o crear objetos en `public`
 - Then PostgreSQL lo rechaza con `permission denied`: cada servicio accede solo a su esquema.
+
+---
+
+## 11. Opcional · Formularios de cobro (Payment Links, PL)
+
+Un **payment link** es un cobro por un monto fijo hacia una cuenta del usuario que lo crea. Lo paga un tercero
+(otro usuario del portal) desde una de sus cuentas; el pago es una **transferencia interna** con todas las reglas
+de §3–§4 (idempotencia, saldo, auditoría). El link es de **un solo uso** y vence a las 24 h.
+Estados: `ACTIVE → PAID`; `EXPIRED` se deriva de `expiresAt` (un link vencido nunca se paga).
+
+**PL-01 Crear link**
+- Given alice autenticada, dueña de ACC-001
+- When hace `POST /payment-links` `{ accountId: ACC-001, amount: "25000.00", description: "Factura 123" }`
+- Then recibe 201 con `{ id, accountId, amount, description, status: ACTIVE, expiresAt (= ahora + 24 h) }`
+- And con un monto inválido recibe 422 `INVALID_AMOUNT`; con una cuenta ajena 403 `FORBIDDEN_ACCOUNT`; con descripción vacía o > 140 caracteres 400.
+
+**PL-02 Ver link (público)**
+- Given un link existente
+- When cualquiera (sin token) hace `GET /payment-links/{id}/public`
+- Then recibe 200 con `{ id, accountId, amount, currency, description, status, expiresAt }` (sin datos del dueño)
+- And si no existe recibe 404.
+
+**PL-03 Pagar link**
+- Given el link ACTIVE de alice por 25.000,00 y bob con saldo en ACC-002
+- When bob hace `POST /payment-links/{id}/pay` `{ fromAccount: ACC-002 }` con Idempotency-Key
+- Then recibe 201 con una transferencia INTERNAL ACC-002 → ACC-001 en `COMPLETED`
+- And el link queda `PAID` con `paidTransferId`, en la **misma transacción** que el débito/crédito y los eventos de auditoría.
+
+**PL-04 Un solo uso**
+- Given un link ya pagado (o dos pagos concurrentes con keys distintas)
+- When se intenta pagar otra vez
+- Then solo un pago se aplica y los demás reciben 409 `INVALID_STATE`
+- And repetir el pago con la misma Idempotency-Key reproduce la respuesta original (`Idempotent-Replayed: true`).
+
+**PL-05 Reglas del pago**
+- Given un link vencido → 422 `PAYMENT_LINK_EXPIRED`
+- Given un pagador sin saldo suficiente → 422 `INSUFFICIENT_FUNDS` y el link sigue `ACTIVE`
+- Given un pagador que usa una cuenta ajena → 403 `FORBIDDEN_ACCOUNT`; pagar hacia la misma cuenta del link → 422 `SAME_ACCOUNT`.
+
+**PL-06 Mis links**
+- When alice hace `GET /payment-links?account=ACC-001`
+- Then recibe sus links ordenados por `createdAt` descendente con su estado actual (incluido `EXPIRED`).

@@ -20,6 +20,7 @@ tags:
   - name: transfers
   - name: accounts
   - name: audit
+  - name: payment-links
 security:
   - bearerAuth: []
 paths:
@@ -230,6 +231,89 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/Balance' }
 
+  /payment-links:
+    post:
+      tags: [payment-links]
+      summary: Crear link de cobro hacia una cuenta propia (PL-01)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePaymentLinkRequest' }
+      responses:
+        '201':
+          description: Link creado (ACTIVE, vence en 24 h)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentLink' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    get:
+      tags: [payment-links]
+      summary: Links de una cuenta propia, más recientes primero (PL-06)
+      parameters:
+        - name: account
+          in: query
+          required: true
+          schema: { type: string, example: ACC-001 }
+      responses:
+        '200':
+          description: Links
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PaymentLink' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /payment-links/{id}/public:
+    get:
+      tags: [payment-links]
+      summary: Ver un link sin autenticación (PL-02)
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentLinkId'
+      responses:
+        '200':
+          description: Datos públicos del link
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicPaymentLink' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /payment-links/{id}/pay:
+    post:
+      tags: [payment-links]
+      summary: Pagar un link desde una cuenta propia (PL-03, PL-04, PL-05)
+      parameters:
+        - $ref: '#/components/parameters/PaymentLinkId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fromAccount]
+              properties:
+                fromAccount: { type: string, example: ACC-002 }
+      responses:
+        '201':
+          description: Pago aplicado; transferencia INTERNAL COMPLETED hacia la cuenta del link
+          headers:
+            Idempotent-Replayed: { $ref: '#/components/headers/IdempotentReplayed' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transfer' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+
   /audit/transfers/{id}/events:
     get:
       tags: [audit]
@@ -261,6 +345,11 @@ components:
       description: Identificador único del intento lógico (UUID recomendado). Alcance por usuario.
       schema: { type: string, minLength: 1, maxLength: 255 }
     TransferId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PaymentLinkId:
       name: id
       in: path
       required: true
@@ -341,6 +430,33 @@ components:
         actorId: { type: string, nullable: true }
         occurredAt: { type: string, format: date-time }
         payload: { type: object }
+    CreatePaymentLinkRequest:
+      type: object
+      required: [accountId, amount, description]
+      properties:
+        accountId: { type: string, example: ACC-001 }
+        amount: { $ref: '#/components/schemas/Money' }
+        description: { type: string, minLength: 1, maxLength: 140, example: Factura 123 }
+    PaymentLinkStatus:
+      type: string
+      enum: [ACTIVE, PAID, EXPIRED]
+    PublicPaymentLink:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        accountId: { type: string }
+        amount: { $ref: '#/components/schemas/Money' }
+        currency: { type: string, enum: [COP] }
+        description: { type: string }
+        status: { $ref: '#/components/schemas/PaymentLinkStatus' }
+        expiresAt: { type: string, format: date-time }
+    PaymentLink:
+      allOf:
+        - $ref: '#/components/schemas/PublicPaymentLink'
+        - type: object
+          properties:
+            paidTransferId: { type: string, format: uuid, nullable: true }
+            createdAt: { type: string, format: date-time }
     Error:
       type: object
       required: [code, message]
@@ -348,5 +464,5 @@ components:
         code:
           type: string
           example: INSUFFICIENT_FUNDS
-          enum: [VALIDATION_ERROR, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_REUSED, UNAUTHORIZED, INVALID_CREDENTIALS, EMAIL_TAKEN, FORBIDDEN_ACCOUNT, NOT_FOUND, ACCOUNT_NOT_FOUND, INVALID_AMOUNT, INSUFFICIENT_FUNDS, SAME_ACCOUNT, INVALID_STATE, INTERNAL_ERROR]
+          enum: [VALIDATION_ERROR, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_REUSED, UNAUTHORIZED, INVALID_CREDENTIALS, EMAIL_TAKEN, FORBIDDEN_ACCOUNT, NOT_FOUND, ACCOUNT_NOT_FOUND, INVALID_AMOUNT, INSUFFICIENT_FUNDS, SAME_ACCOUNT, INVALID_STATE, PAYMENT_LINK_EXPIRED, INTERNAL_ERROR]
         message: { type: string }
