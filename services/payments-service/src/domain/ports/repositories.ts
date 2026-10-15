@@ -1,4 +1,5 @@
 import type { Account } from '../model/Account.js';
+import type { PaymentLink } from '../model/PaymentLink.js';
 import type { Transfer, TransferEvent, TransferStatus } from '../model/Transfer.js';
 
 export interface AccountRepository {
@@ -43,11 +44,22 @@ export interface Outbox {
   append(events: TransferEvent[]): Promise<void>;
 }
 
+export interface PaymentLinkRepository {
+  insert(link: PaymentLink): Promise<void>;
+  findById(id: string): Promise<PaymentLink | null>;
+  /** Bloquea el link: dos pagos concurrentes se serializan y el segundo lo ve PAID (PL-04). */
+  findByIdForUpdate(id: string): Promise<PaymentLink | null>;
+  /** UPDATE condicional (solo si sigue ACTIVE). */
+  markPaid(link: PaymentLink): Promise<boolean>;
+  listByAccount(accountId: string): Promise<PaymentLink[]>;
+}
+
 export interface TransactionContext {
   accounts: AccountRepository;
   transfers: TransferRepository;
   idempotency: IdempotencyStore;
   outbox: Outbox;
+  paymentLinks: PaymentLinkRepository;
 }
 
 /** Ejecuta `work` en una transacción de BD: commit si termina bien, rollback si lanza. */

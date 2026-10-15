@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { CreateTransfer } from './application/CreateTransfer.js';
+import { PaymentLinks } from './application/paymentLinks.js';
 import { ProcessRailOperations } from './application/ProcessRailOperations.js';
 import { TransferQueries } from './application/queries.js';
 import { ReverseTransfer } from './application/ReverseTransfer.js';
@@ -35,8 +36,11 @@ const uow = new PgUnitOfWork(pool);
 const clock = { now: () => new Date() };
 const ids = { newId: () => randomUUID() };
 
+// Cada worker reclama UNA transferencia por ciclo: una llamada lenta al riel (hasta 10 s) no frena a las demás.
+// Varios workers en paralelo son seguros porque el claim usa FOR UPDATE SKIP LOCKED + lease.
+const RAIL_WORKERS = 8;
 const railProcessor = new ProcessRailOperations(uow, new HttpBankRail(config.railBaseUrl, config.railTimeoutMs), clock, {
-  batchSize: 10,
+  batchSize: 1,
   leaseMs: 3 * config.railTimeoutMs,
   baseDelayMs: 1_000,
   maxDelayMs: 60_000,
@@ -47,27 +51,31 @@ const app = buildApp({
   createTransfer: new CreateTransfer(uow, clock, ids),
   reverseTransfer: new ReverseTransfer(uow, clock, ids),
   queries: new TransferQueries(uow),
+  paymentLinks: new PaymentLinks(uow, clock, ids),
   jwtSecret: config.jwtSecret,
-  onRailWorkQueued: () => railWorker.wake(),
+  onRailWorkQueued: () => railWorkers.forEach((worker) => worker.wake()),
   logger: true,
 });
 const log = (message: string) => app.log.info(message);
 const logError = (error: unknown) => app.log.error(error);
 
-const railWorker = new PollingWorker(1_000, () => railProcessor.runOnce(), logError);
+const railWorkers = Array.from(
+  { length: RAIL_WORKERS },
+  () => new PollingWorker(1_000, () => railProcessor.runOnce(), logError),
+);
 const publisher = new RabbitMqPublisher(config.rabbitUrl, 'payments.events', log);
 const relay = new OutboxRelay(pool, publisher);
 const outboxWorker = new PollingWorker(500, () => relay.publishPending(), logError);
 
 publisher.start();
-railWorker.start();
+railWorkers.forEach((worker) => worker.start());
 outboxWorker.start();
 await app.listen({ host: '0.0.0.0', port: config.port });
 
 const shutdown = async () => {
   log('Apagando payments-service…');
   await app.close();
-  await Promise.all([railWorker.stop(), outboxWorker.stop()]);
+  await Promise.all([...railWorkers.map((worker) => worker.stop()), outboxWorker.stop()]);
   await publisher.stop();
   await pool.end();
   process.exit(0);

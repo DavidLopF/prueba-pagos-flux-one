@@ -3,6 +3,7 @@ import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import jwt from 'jsonwebtoken';
 import type pg from 'pg';
 import { CreateTransfer } from '../../src/application/CreateTransfer.js';
+import { PaymentLinks } from '../../src/application/paymentLinks.js';
 import { ProcessRailOperations } from '../../src/application/ProcessRailOperations.js';
 import { TransferQueries } from '../../src/application/queries.js';
 import { ReverseTransfer } from '../../src/application/ReverseTransfer.js';
@@ -46,6 +47,7 @@ export function createHarness(pool: pg.Pool, rail: BankRail): Harness {
     createTransfer: new CreateTransfer(uow, clock, ids),
     reverseTransfer: new ReverseTransfer(uow, clock, ids),
     queries: new TransferQueries(uow),
+    paymentLinks: new PaymentLinks(uow, clock, ids),
     jwtSecret: JWT_SECRET,
   });
   // Sin backoff en tests: un reintento queda disponible en el siguiente ciclo.

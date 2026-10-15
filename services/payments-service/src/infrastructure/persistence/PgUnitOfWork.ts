@@ -3,6 +3,7 @@ import type { TransactionContext, UnitOfWork } from '../../domain/ports/reposito
 import { PgAccountRepository } from './PgAccountRepository.js';
 import { PgIdempotencyStore } from './PgIdempotencyStore.js';
 import { PgOutbox } from './PgOutbox.js';
+import { PgPaymentLinkRepository } from './PgPaymentLinkRepository.js';
 import { PgTransferRepository } from './PgTransferRepository.js';
 
 /** Una transacción por llamada a run(); todos los repositorios comparten la misma conexión. */
@@ -18,6 +19,7 @@ export class PgUnitOfWork implements UnitOfWork {
         transfers: new PgTransferRepository(client),
         idempotency: new PgIdempotencyStore(client),
         outbox: new PgOutbox(client),
+        paymentLinks: new PgPaymentLinkRepository(client),
       });
       await client.query('COMMIT');
       return result;

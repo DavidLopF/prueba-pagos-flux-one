@@ -10,7 +10,8 @@ export type DomainErrorCode =
   | 'FORBIDDEN_ACCOUNT'
   | 'NOT_FOUND'
   | 'INVALID_STATE'
-  | 'IDEMPOTENCY_KEY_REUSED';
+  | 'IDEMPOTENCY_KEY_REUSED'
+  | 'PAYMENT_LINK_EXPIRED';
 
 export class DomainError extends Error {
   constructor(

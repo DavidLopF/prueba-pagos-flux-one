@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import jwt from 'jsonwebtoken';
 import { z, ZodError } from 'zod';
 import type { CreateTransfer } from '../../application/CreateTransfer.js';
+import type { PaymentLinks } from '../../application/paymentLinks.js';
 import type { TransferQueries } from '../../application/queries.js';
 import type { ReverseTransfer } from '../../application/ReverseTransfer.js';
 import type { TransferView } from '../../application/views.js';
@@ -11,12 +12,17 @@ declare module 'fastify' {
   interface FastifyRequest {
     userId: string;
   }
+  interface FastifyContextConfig {
+    /** Ruta accesible sin JWT. */
+    public?: boolean;
+  }
 }
 
 export interface AppDependencies {
   createTransfer: CreateTransfer;
   reverseTransfer: ReverseTransfer;
   queries: TransferQueries;
+  paymentLinks: PaymentLinks;
   jwtSecret: string;
   /** Avisa al worker del riel que hay trabajo nuevo (opcional). */
   onRailWorkQueued?: () => void;
@@ -33,6 +39,7 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   FORBIDDEN_ACCOUNT: 403,
   NOT_FOUND: 404,
   INVALID_STATE: 409,
+  PAYMENT_LINK_EXPIRED: 422,
 };
 
 const createTransferBody = z.object({
@@ -46,6 +53,12 @@ const transferIdParams = z.object({ id: z.string().uuid() });
 const accountParams = z.object({ accountId: z.string().min(1).max(64) });
 const listQuery = z.object({ account: z.string().min(1).max(64) });
 const idempotencyKeyHeader = z.string().trim().min(1).max(255);
+const createPaymentLinkBody = z.object({
+  accountId: z.string().trim().min(1).max(64),
+  amount: z.string().max(32),
+  description: z.string().trim().min(1).max(140),
+});
+const payPaymentLinkBody = z.object({ fromAccount: z.string().trim().min(1).max(64) });
 
 export function buildApp(deps: AppDependencies): FastifyInstance {
   const app = Fastify({ logger: deps.logger ?? false });
@@ -62,7 +75,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
 
   app.decorateRequest('userId', '');
   app.addHook('onRequest', async (request, reply) => {
-    if (request.url === '/health') return;
+    if (request.routeOptions.config?.public) return;
     const userId = verifyBearer(request, deps.jwtSecret);
     if (!userId) {
       return reply.code(401).send({ code: 'UNAUTHORIZED', message: 'Token ausente, inválido o vencido' });
@@ -70,7 +83,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     request.userId = userId;
   });
 
-  app.get('/health', async () => ({ status: 'ok' }));
+  app.get('/health', { config: { public: true } }, async () => ({ status: 'ok' }));
 
   app.post('/transfers', async (request, reply) => {
     const idempotencyKey = requireIdempotencyKey(request);
@@ -107,6 +120,35 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   app.get('/accounts/:accountId/balance', async (request) => {
     const { accountId } = accountParams.parse(request.params);
     return deps.queries.getBalance(request.userId, accountId);
+  });
+
+  app.post('/payment-links', async (request, reply) => {
+    const body = createPaymentLinkBody.parse(request.body);
+    const link = await deps.paymentLinks.create({ userId: request.userId, ...body });
+    return reply.code(201).send(link);
+  });
+
+  app.get('/payment-links', async (request) => {
+    const { account } = listQuery.parse(request.query);
+    return deps.paymentLinks.listByAccount(request.userId, account);
+  });
+
+  app.get('/payment-links/:id/public', { config: { public: true } }, async (request) => {
+    const { id } = transferIdParams.parse(request.params);
+    return deps.paymentLinks.getPublic(id);
+  });
+
+  app.post('/payment-links/:id/pay', async (request, reply) => {
+    const idempotencyKey = requireIdempotencyKey(request);
+    const { id } = transferIdParams.parse(request.params);
+    const { fromAccount } = payPaymentLinkBody.parse(request.body);
+    const { result, replayed } = await deps.paymentLinks.pay({
+      userId: request.userId,
+      idempotencyKey,
+      linkId: id,
+      fromAccount,
+    });
+    return sendTransfer(reply, result, replayed, 201);
   });
 
   app.setErrorHandler((error, request, reply) => {
