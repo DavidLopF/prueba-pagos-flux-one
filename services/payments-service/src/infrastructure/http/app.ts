@@ -1,3 +1,4 @@
+import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import jwt from 'jsonwebtoken';
 import { z, ZodError } from 'zod';
@@ -7,6 +8,7 @@ import type { TransferQueries } from '../../application/queries.js';
 import type { ReverseTransfer } from '../../application/ReverseTransfer.js';
 import type { TransferView } from '../../application/views.js';
 import { DomainError, type DomainErrorCode } from '../../domain/errors.js';
+import type { RealtimeHub } from '../realtime/RealtimeHub.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -23,6 +25,8 @@ export interface AppDependencies {
   reverseTransfer: ReverseTransfer;
   queries: TransferQueries;
   paymentLinks: PaymentLinks;
+  /** Registro de WebSocket de esta instancia (docs/spec.md §12). */
+  realtime: RealtimeHub;
   jwtSecret: string;
   /** Avisa al worker del riel que hay trabajo nuevo (opcional). */
   onRailWorkQueued?: () => void;
@@ -84,6 +88,25 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   });
 
   app.get('/health', { config: { public: true } }, async () => ({ status: 'ok' }));
+
+  // RT-01/RT-02: el navegador no puede mandar Authorization en un WebSocket, así que el JWT viaja en la query.
+  // La ruta es "public" para el hook HTTP; la autenticación la hace el propio handler y cierra con 4401.
+  app.register(websocket);
+  app.register(async (instance) => {
+    instance.get('/ws', { websocket: true, config: { public: true } }, (socket, request) => {
+      const { token } = request.query as { token?: string };
+      const claims = token ? verifyAccessToken(token, deps.jwtSecret) : null;
+      if (!claims) {
+        socket.close(4401, 'UNAUTHORIZED');
+        return;
+      }
+      deps.realtime.add(claims.userId, socket);
+      // Cuando vence el token se cierra con 4401: el cliente lo renueva y reconecta con uno válido.
+      const expiry = setTimeout(() => socket.close(4401, 'TOKEN_EXPIRED'), Math.max(claims.expiresAt - Date.now(), 0));
+      socket.once('close', () => clearTimeout(expiry));
+      socket.send(JSON.stringify({ type: 'ready' }));
+    });
+  });
 
   app.post('/transfers', async (request, reply) => {
     const idempotencyKey = requireIdempotencyKey(request);
@@ -184,17 +207,23 @@ function sendTransfer(reply: FastifyReply, view: TransferView, replayed: boolean
   return reply.code(status).send(view);
 }
 
-/** Devuelve el `sub` del JWT emitido por auth-service, o null si no es válido (AUTH-04). */
+/** Devuelve el `sub` del JWT del header Authorization, o null si no es válido (AUTH-04). */
 function verifyBearer(request: FastifyRequest, secret: string): string | null {
   const header = request.headers.authorization;
   if (!header?.startsWith('Bearer ')) return null;
+  return verifyAccessToken(header.slice('Bearer '.length), secret)?.userId ?? null;
+}
+
+/** Valida un access token emitido por auth-service (firma, emisor, audiencia y vencimiento). */
+function verifyAccessToken(token: string, secret: string): { userId: string; expiresAt: number } | null {
   try {
-    const claims = jwt.verify(header.slice('Bearer '.length), secret, {
+    const claims = jwt.verify(token, secret, {
       algorithms: ['HS256'],
       issuer: 'auth-service',
       audience: 'payments-portal',
     });
-    return typeof claims === 'object' && typeof claims.sub === 'string' ? claims.sub : null;
+    if (typeof claims !== 'object' || typeof claims.sub !== 'string' || typeof claims.exp !== 'number') return null;
+    return { userId: claims.sub, expiresAt: claims.exp * 1000 };
   } catch {
     return null;
   }

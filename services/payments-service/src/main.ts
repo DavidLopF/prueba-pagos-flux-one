@@ -9,6 +9,8 @@ import { buildApp } from './infrastructure/http/app.js';
 import { OutboxRelay } from './infrastructure/messaging/OutboxRelay.js';
 import { RabbitMqPublisher } from './infrastructure/messaging/RabbitMqPublisher.js';
 import { runMigrations } from './infrastructure/persistence/migrate.js';
+import { RabbitMqRealtimeConsumer } from './infrastructure/realtime/RabbitMqRealtimeConsumer.js';
+import { RealtimeHub } from './infrastructure/realtime/RealtimeHub.js';
 import { PgUnitOfWork } from './infrastructure/persistence/PgUnitOfWork.js';
 import { HttpBankRail } from './infrastructure/rail/HttpBankRail.js';
 import { PollingWorker } from './infrastructure/workers/PollingWorker.js';
@@ -47,11 +49,13 @@ const railProcessor = new ProcessRailOperations(uow, new HttpBankRail(config.rai
   maxAttempts: 10,
 });
 
+const realtime = new RealtimeHub();
 const app = buildApp({
   createTransfer: new CreateTransfer(uow, clock, ids),
   reverseTransfer: new ReverseTransfer(uow, clock, ids),
   queries: new TransferQueries(uow),
   paymentLinks: new PaymentLinks(uow, clock, ids),
+  realtime,
   jwtSecret: config.jwtSecret,
   onRailWorkQueued: () => railWorkers.forEach((worker) => worker.wake()),
   logger: true,
@@ -66,17 +70,21 @@ const railWorkers = Array.from(
 const publisher = new RabbitMqPublisher(config.rabbitUrl, 'payments.events', log);
 const relay = new OutboxRelay(pool, publisher);
 const outboxWorker = new PollingWorker(500, () => relay.publishPending(), logError);
+const realtimeConsumer = new RabbitMqRealtimeConsumer(config.rabbitUrl, 'payments.events', realtime, log);
 
 publisher.start();
+realtimeConsumer.start();
+realtime.startHeartbeat();
 railWorkers.forEach((worker) => worker.start());
 outboxWorker.start();
 await app.listen({ host: '0.0.0.0', port: config.port });
 
 const shutdown = async () => {
   log('Apagando payments-service…');
+  realtime.closeAll(1001, 'SHUTDOWN');
   await app.close();
   await Promise.all([...railWorkers.map((worker) => worker.stop()), outboxWorker.stop()]);
-  await publisher.stop();
+  await Promise.all([publisher.stop(), realtimeConsumer.stop()]);
   await pool.end();
   process.exit(0);
 };

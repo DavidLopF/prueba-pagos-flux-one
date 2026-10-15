@@ -10,6 +10,7 @@ import { ReverseTransfer } from '../../src/application/ReverseTransfer.js';
 import type { BankRail } from '../../src/domain/ports/BankRail.js';
 import { buildApp } from '../../src/infrastructure/http/app.js';
 import { PgUnitOfWork } from '../../src/infrastructure/persistence/PgUnitOfWork.js';
+import { RealtimeHub } from '../../src/infrastructure/realtime/RealtimeHub.js';
 
 export const JWT_SECRET = 'test-secret';
 
@@ -31,6 +32,7 @@ export function tokenFor(userId: string, options: { secret?: string; expiresIn?:
 
 export interface Harness {
   app: FastifyInstance;
+  realtime: RealtimeHub;
   worker: ProcessRailOperations;
   createTransfer(user: string, body: Record<string, unknown>, idempotencyKey?: string): Promise<LightMyRequestResponse>;
   reverse(user: string, transferId: string, idempotencyKey?: string): Promise<LightMyRequestResponse>;
@@ -43,11 +45,13 @@ export function createHarness(pool: pg.Pool, rail: BankRail): Harness {
   const uow = new PgUnitOfWork(pool);
   const clock = { now: () => new Date() };
   const ids = { newId: () => randomUUID() };
+  const realtime = new RealtimeHub();
   const app = buildApp({
     createTransfer: new CreateTransfer(uow, clock, ids),
     reverseTransfer: new ReverseTransfer(uow, clock, ids),
     queries: new TransferQueries(uow),
     paymentLinks: new PaymentLinks(uow, clock, ids),
+    realtime,
     jwtSecret: JWT_SECRET,
   });
   // Sin backoff en tests: un reintento queda disponible en el siguiente ciclo.
@@ -61,6 +65,7 @@ export function createHarness(pool: pg.Pool, rail: BankRail): Harness {
 
   return {
     app,
+    realtime,
     worker,
     createTransfer: (user, body, idempotencyKey = randomUUID()) =>
       app.inject({
