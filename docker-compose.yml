@@ -1,0 +1,126 @@
+# docker compose up --build  →  http://localhost:8080 (frontend + gateway /api)
+# Variables: valores por defecto abajo; se pueden sobreescribir con un .env en la raíz (ver .env.example).
+x-node-healthcheck: &node-healthcheck
+  interval: 5s
+  timeout: 3s
+  retries: 20
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: payments_portal
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      # Crea los esquemas auth/payment/audit y un rol por servicio (aislamiento real por esquema).
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d payments_portal"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672" # consola: guest / guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  bank-rail:
+    restart: unless-stopped
+    build: ./services/bank-rail-simulator
+    environment:
+      PORT: "8080"
+      RAIL_P_ACCEPT: ${RAIL_P_ACCEPT:-0.55}
+      RAIL_P_REJECT: ${RAIL_P_REJECT:-0.15}
+      RAIL_P_UNAVAILABLE: ${RAIL_P_UNAVAILABLE:-0.15}
+      RAIL_P_TIMEOUT: ${RAIL_P_TIMEOUT:-0.15}
+      RAIL_LOOKUP_P_UNAVAILABLE: ${RAIL_LOOKUP_P_UNAVAILABLE:-0.10}
+      RAIL_LOOKUP_P_TIMEOUT: ${RAIL_LOOKUP_P_TIMEOUT:-0.05}
+      RAIL_TIMEOUT_DELAY_MS: ${RAIL_TIMEOUT_DELAY_MS:-15000}
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health || exit 1"]
+      <<: *node-healthcheck
+
+  auth-service:
+    restart: unless-stopped
+    build: ./services/auth-service
+    environment:
+      PORT: "3001"
+      DATABASE_URL: postgres://auth_user:auth_pass@postgres:5432/payments_portal
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-change-me-in-prod-0123456789}
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/health || exit 1"]
+      <<: *node-healthcheck
+
+  payments-service:
+    restart: unless-stopped
+    build: ./services/payments-service
+    environment:
+      PORT: "3002"
+      DATABASE_URL: postgres://payments_user:payments_pass@postgres:5432/payments_portal
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-change-me-in-prod-0123456789}
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RAIL_BASE_URL: http://bank-rail:8080
+      RAIL_TIMEOUT_MS: ${RAIL_TIMEOUT_MS:-10000}
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # No depende de que RabbitMQ esté arriba: el outbox guarda los eventos y el publicador reconecta solo.
+      rabbitmq:
+        condition: service_started
+      bank-rail:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3002/health || exit 1"]
+      <<: *node-healthcheck
+
+  audit-service:
+    restart: unless-stopped
+    build: ./services/audit-service
+    environment:
+      PORT: "3003"
+      DATABASE_URL: postgres://audit_user:audit_pass@postgres:5432/payments_portal
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-change-me-in-prod-0123456789}
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+    ports:
+      - "3003:3003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3003/health || exit 1"]
+      <<: *node-healthcheck
+
+  frontend:
+    restart: unless-stopped
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - auth-service
+      - payments-service
+      - audit-service
+
+volumes:
+  pgdata:
