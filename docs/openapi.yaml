@@ -21,6 +21,7 @@ tags:
   - name: accounts
   - name: audit
   - name: payment-links
+  - name: realtime
 security:
   - bearerAuth: []
 paths:
@@ -313,6 +314,25 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
+
+  /ws:
+    get:
+      tags: [realtime]
+      summary: WebSocket de avisos de transferencias (RT-01..03)
+      description: |
+        Upgrade a WebSocket. El JWT va en la query porque el navegador no permite headers en WebSocket.
+        Mensajes del servidor (JSON): `{"type":"ready"}` al autenticar y
+        `{"type":"transfer.updated","transferId","eventType","status","occurredAt"}` por cada cambio en el que
+        participa el usuario. Cierre `4401` = token ausente, inválido o vencido (el cliente renueva y reconecta).
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '101':
+          description: Switching Protocols (conexión WebSocket establecida)
 
   /audit/transfers/{id}/events:
     get:

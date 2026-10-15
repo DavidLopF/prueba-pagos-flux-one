@@ -390,3 +390,34 @@ Estados: `ACTIVE → PAID`; `EXPIRED` se deriva de `expiresAt` (un link vencido 
 **PL-06 Mis links**
 - When alice hace `GET /payment-links?account=ACC-001`
 - Then recibe sus links ordenados por `createdAt` descendente con su estado actual (incluido `EXPIRED`).
+
+---
+
+## 12. Movimientos en tiempo real (RT)
+
+payments-service expone un WebSocket (`GET /ws?token=<JWT>`, por el gateway `/api/ws`). Los avisos salen de los mismos
+eventos del outbox (§7): cada instancia de payments consume `payments.events` con una **cola exclusiva propia**
+(fan-out) y avisa a sus clientes conectados. El aviso solo dice *qué transferencia cambió*; el cliente vuelve a
+consultar la API, que sigue siendo la fuente de verdad (los avisos son best-effort).
+
+**RT-01 Aviso solo a los participantes**
+- Given alice conectada al WebSocket
+- When cambia una transferencia en la que participa (los mismos eventos de AUD-01)
+- Then recibe `{ "type": "transfer.updated", "transferId", "eventType", "status", "occurredAt" }`
+- And un usuario que no participa no recibe nada.
+
+**RT-02 Canal autenticado**
+- Given una conexión sin token o con un token inválido o vencido
+- Then el servidor la cierra con el código `4401`
+- And si el token vence con la conexión abierta, también la cierra con `4401` para que el cliente renueve el token y reconecte.
+
+**RT-03 Fan-out por instancia**
+- Given dos instancias de payments-service conectadas a RabbitMQ
+- When se publica un evento de transferencia
+- Then ambas lo reciben (cada una con su cola exclusiva) y avisan a sus propios clientes.
+
+**FE-04 Movimientos que se actualizan solos**
+- Given el dashboard abierto
+- When llega un aviso `transfer.updated`
+- Then la lista de movimientos y los saldos se actualizan sin recargar ni pulsar "Actualizar" (que sigue disponible)
+- And si la conexión se cae, reconecta con backoff, vuelve a consultar al reconectar y muestra el estado de la conexión.
