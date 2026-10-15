@@ -37,7 +37,7 @@ Estados terminales: `FAILED`, `REVERSED`. `COMPLETED` es terminal salvo por reve
 | 503                  | No disponible, **no** procesada              | Sigue `PENDING`, reintento con backoff, misma reference |
 | Sin respuesta en 10s | Desconocido                                  | `UNKNOWN`, reconciliar con `GET /rail/transfers/{reference}` |
 
-**Supuestos sobre el riel** (a validar cuando llegue el repositorio oficial):
+**Contrato complementario del riel** (el simulado lo construimos nosotros, ver §9):
 - S1. `GET /rail/transfers/{reference}` responde `200 { "reference", "status": "ACCEPTED" | "REJECTED" }` si la conoce y `404` si no.
 - S2. Un error de conexión (connection refused / DNS) antes de enviar el request equivale a 503 (no procesada).
 - S3. Para reversos usamos la misma consulta `GET /rail/transfers/{reference}` con la reference del reverso.
@@ -289,3 +289,53 @@ Estados terminales: `FAILED`, `REVERSED`. `COMPLETED` es terminal salvo por reve
 **FE-03 Historial de auditoría**
 - When abro el detalle de una transferencia
 - Then veo la línea de tiempo de eventos de auditoría.
+
+---
+
+## 9. Riel bancario simulado (RAIL)
+
+> Cambio comunicado por los evaluadores durante la prueba (correo 08:44): el servicio simulado del riel
+> **lo construimos nosotros** (`services/bank-rail-simulator`). Los supuestos S1–S3 pasan a ser contrato.
+
+Contrato (puerto 8080 en la red de compose, `http://localhost:8081` desde el host):
+
+| Endpoint | Respuestas |
+|----------|------------|
+| `POST /rail/transfers` `{reference, from, to, amount}` | 200 `{reference, status: ACCEPTED}` · 422 `{reference, status: REJECTED, reason}` · 503 `{error: UNAVAILABLE}` · sin respuesta antes de 15 s · 400 body inválido · 409 `REFERENCE_CONFLICT` (misma reference con otro payload) |
+| `GET /rail/transfers/{reference}` | 200 `{reference, kind: TRANSFER\|REVERSAL, status, amount}` · 404 `{error: NOT_FOUND}` · 503 / sin respuesta (con menor probabilidad) |
+| `POST /rail/reversals` `{reference, originalReference, amount}` | Igual que transfers; 422 si la original no existe, no fue ACCEPTED, el monto no coincide o ya fue reversada |
+| `PUT /rail/admin/mode` `{mode: RANDOM\|ACCEPT\|REJECT\|UNAVAILABLE\|TIMEOUT}` | Fuerza el resultado de todas las operaciones (para demos) |
+
+**RAIL-01 Respuestas aleatorias**
+- Given el riel en modo `RANDOM` con pesos configurables (por defecto 55 % ACCEPTED, 15 % REJECTED, 15 % 503, 15 % timeout)
+- When recibe `POST /rail/transfers` o `POST /rail/reversals`
+- Then responde 200, 422, 503 o no responde en 10 s según el sorteo.
+
+**RAIL-02 Idempotente por reference**
+- Given una reference ya procesada (ACCEPTED o REJECTED)
+- When llega otra vez con el mismo payload
+- Then devuelve el resultado guardado sin volver a procesar ni sortear
+- And si llega con otro payload responde 409 `REFERENCE_CONFLICT`.
+
+**RAIL-03 Timeout con resultado incierto**
+- Given un sorteo de timeout
+- When el riel decide (50 %) si la operación quedó procesada o no
+- Then `GET /rail/transfers/{reference}` refleja la verdad: 200 con estado si se procesó, 404 si no.
+
+**RAIL-04 Reglas del reverso**
+- When llega un reverso
+- Then solo se acepta si la original existe, fue ACCEPTED, el monto coincide y no fue reversada antes.
+
+**RAIL-05 Escenarios deterministas para demo**
+- Given un `to` que contiene `OK`, `REJECT`, `DOWN`, `TIMEOUT` (procesada) o `LOST` (no procesada), o un `to` con `REVOK`/`REVREJECT`/`REVDOWN`… para el reverso
+- Or el modo forzado con `PUT /rail/admin/mode`
+- Then el resultado es el indicado (los tokens ganan sobre el modo).
+
+---
+
+## 10. Arquitectura verificable (ARQ)
+
+**ARQ-01 Aislamiento de esquemas**
+- Given el rol de base de datos de un servicio (p. ej. `payments_user`)
+- When intenta leer otro esquema (`audit_schema`, `auth_schema`) o crear objetos en `public`
+- Then PostgreSQL lo rechaza con `permission denied`: cada servicio accede solo a su esquema.

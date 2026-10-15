@@ -76,4 +76,5 @@ services/<svc>/src/
 ## 8. Convenciones de código
 - TypeScript estricto, Node 22, ESM. SQL explícito con `pg` (sin ORM).
 - Tests con Vitest: unitarios con fakes de puertos; aceptación con PostgreSQL real (Testcontainers).
-- No se modifica el riel bancario simulado entregado; solo se consume vía `RAIL_BASE_URL`.
+- El riel bancario simulado es un servicio propio (`services/bank-rail-simulator`, contrato en `docs/spec.md` §9).
+  payments-service solo lo consume vía `RAIL_BASE_URL` y no asume nada fuera de ese contrato.
