@@ -5,6 +5,9 @@ Tres microservicios hexagonales en **Node.js 22 + TypeScript** (Auth, Payments, 
 Construido con Spec-Driven Development: `docs/spec.md` (criterios Given/When/Then con ID) → `docs/openapi.yaml`
 → tests que citan el ID → código. Reglas para agentes y humanos en [`CLAUDE.md`](./CLAUDE.md).
 
+> **Demo en vivo (durante la evaluación):** https://98-81-60-52.sslip.io — `alice@demo.co` / `Demo1234!` (también `bob@` y `carol@`).
+> AWS EC2 `t3.medium` en us-east-1, desplegado con `deploy/aws-ec2.sh`; HTTPS de Let's Encrypt y solo los puertos 80/443 abiertos.
+
 ## Levantar y probar (≤ 5 comandos)
 
 ```bash
@@ -122,6 +125,7 @@ Cada servicio: `domain/` (entidades, máquina de estados, puertos; sin dependenc
 - **Observabilidad**: métricas (lag del outbox, transferencias `UNKNOWN`, intentos al riel), `correlationId` del request propagado en los eventos y trazas distribuidas.
 - **Seguridad**: JWT asimétrico (RS256 + JWKS) para no compartir el secreto, refresh token en cookie `httpOnly` en lugar de `sessionStorage`, rate limiting / bloqueo en login.
 - **Pruebas**: e2e automatizado contra `docker compose` (Playwright), contract test del evento payments→audit con un JSON Schema compartido y prueba de carga de concurrencia.
+- **Despliegue**: construir las imágenes en CI (GitHub Actions → GHCR) para que la VM solo las descargue; así alcanza una instancia más pequeña y el despliegue no compila en producción.
 
 ## Supuestos
 
