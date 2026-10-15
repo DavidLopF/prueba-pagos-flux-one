@@ -1,9 +1,9 @@
 import { DomainError } from '../domain/errors.js';
-import type { Account } from '../domain/model/Account.js';
 import { Money } from '../domain/model/Money.js';
-import { Transfer, type TransferType } from '../domain/model/Transfer.js';
+import type { TransferType } from '../domain/model/Transfer.js';
 import type { UnitOfWork } from '../domain/ports/repositories.js';
 import type { Clock, IdGenerator } from '../domain/ports/system.js';
+import { executeTransfer } from './executeTransfer.js';
 import { type IdempotentResult, type TransferView, toTransferView } from './views.js';
 
 export interface CreateTransferCommand {
@@ -54,50 +54,19 @@ export class CreateTransfer {
         return { result: idempotency.response as TransferView, replayed: true };
       }
 
-      const isInternal = command.type === 'INTERNAL';
-      const locked = await tx.accounts.lockByIds(
-        isInternal ? [command.fromAccount, command.toAccount] : [command.fromAccount],
-      );
-      const source = findAccount(locked, command.fromAccount);
-      source.assertOwnedBy(command.userId);
-      const destination = isInternal ? findAccount(locked, command.toAccount) : null;
-
-      const now = this.clock.now();
-      const transfer = Transfer.create({
+      const transfer = await executeTransfer(tx, {
         id: this.ids.newId(),
+        userId: command.userId,
         type: command.type,
         fromAccount: command.fromAccount,
         toAccount: command.toAccount,
         amount,
-        ownerId: source.ownerId,
-        counterpartyOwnerId: destination?.ownerId ?? null,
-        now,
+        now: this.clock.now(),
       });
-
-      // Lanza INSUFFICIENT_FUNDS antes de escribir nada. En EXTERNAL el débito retiene el dinero
-      // hasta que el riel responda (EXT-01).
-      source.debit(amount);
-      await tx.accounts.saveBalance(source);
-      if (destination) {
-        destination.credit(amount);
-        await tx.accounts.saveBalance(destination);
-        transfer.markCompleted({ now, actorId: command.userId });
-      }
-
-      await tx.transfers.insert(transfer);
-      await tx.outbox.append(transfer.pullEvents());
 
       const view = toTransferView(transfer);
       await tx.idempotency.complete(command.userId, command.idempotencyKey, view);
       return { result: view, replayed: false };
     });
   }
-}
-
-function findAccount(accounts: Account[], id: string): Account {
-  const account = accounts.find((candidate) => candidate.id === id);
-  if (!account) {
-    throw new DomainError('ACCOUNT_NOT_FOUND', `La cuenta ${id} no existe`);
-  }
-  return account;
 }
